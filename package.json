@@ -1,0 +1,12 @@
+{
+  "name": "ockey",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A tiny macOS OpenAI-compatible key gateway for bundled OpenCode free models.",
+  "scripts": {
+    "check": "swiftc -typecheck app/OCKeyApp.swift -framework AppKit -framework Foundation -framework Network",
+    "smoke": "swiftc -typecheck app/OCKeyApp.swift -framework AppKit -framework Foundation -framework Network && test -x /Users/wf/.opencode/bin/opencode",
+    "build-app": "zsh scripts/build-app.sh",
+    "package-dmg": "zsh scripts/package-dmg.sh"
+  }
+}
