@@ -4,6 +4,16 @@ OCKey is a tiny macOS menu-bar app that exposes OpenCode models through a local 
 
 It is designed to be installed as a standalone app. The app bundle includes an OpenCode CLI runtime, starts a local server at `127.0.0.1:8789`, generates local `ockey_...` API keys, and defaults to OpenCode models marked as free.
 
+## Windows
+
+The Windows tray version lives in [`windows/`](windows/). It uses the same local API shape, port, and `ockey_...` key format, but is packaged with Electron for Windows.
+
+Before building the Windows package, put the Windows OpenCode runtime at:
+
+```text
+windows/resources/runtime/bin/opencode.exe
+```
+
 ## Quick Start
 
 1. Install `OCKey.app`.

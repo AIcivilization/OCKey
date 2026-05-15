@@ -1,0 +1,51 @@
+{
+  "name": "ockey-windows",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Windows tray app that exposes bundled OpenCode free models through a local OpenAI-compatible API.",
+  "main": "src/main.js",
+  "scripts": {
+    "check": "node --check src/server.js && node --check src/main.js",
+    "start": "electron .",
+    "start:server": "node src/server.js",
+    "build": "electron-builder --win nsis portable",
+    "smoke": "node scripts/smoke.js"
+  },
+  "dependencies": {
+    "electron": "^33.4.11"
+  },
+  "devDependencies": {
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "local.ockey.windows",
+    "productName": "OCKey",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "resources/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/runtime/bin",
+        "to": "runtime/bin"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "artifactName": "OCKey-1.0.0-Windows.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

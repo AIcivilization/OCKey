@@ -1,0 +1,11 @@
+node_modules
+dist
+out
+*.exe
+*.msi
+*.zip
+*.7z
+.DS_Store
+resources/runtime/bin/opencode.exe
+resources/runtime/bin/opencode
+resources/runtime/bin/opencode.cmd
