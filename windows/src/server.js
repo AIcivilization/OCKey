@@ -2,7 +2,6 @@
 
 const crypto = require('node:crypto');
 const fs = require('node:fs');
-const fsp = require('node:fs/promises');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
@@ -13,6 +12,7 @@ const HOST = process.env.OCKEY_HOST || '127.0.0.1';
 const BASE_URL = `http://${HOST}:${PORT}`;
 const OPENAI_BASE_URL = `${BASE_URL}/v1`;
 const DEFAULT_MODEL = 'opencode/minimax-m2.5-free';
+const OPENCODE_CLI_NAMES = ['opencode-cli.exe', 'opencode.exe', 'opencode.cmd', 'opencode'];
 
 function appDataRoot() {
   const root = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
@@ -38,7 +38,17 @@ class Store {
     this.usagePath = path.join(this.dataRoot, 'usage.json');
     this.settingsPath = path.join(this.dataRoot, 'settings.json');
     this.auditPath = path.join(this.logsRoot, 'audit.jsonl');
-    this.opencodePath = path.join(this.runtimeBin, 'opencode.exe');
+    // 优先使用环境变量 OCKEY_OPENCODE_PATH 指定的已安装 OpenCode CLI；
+    // 否则自动探测常见安装位置；都没有再回退到打包目录。
+    const candidates = [
+      process.env.OCKEY_OPENCODE_PATH,
+      process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'OpenCode', 'opencode-cli.exe'),
+      process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'OpenCode', 'opencode.exe'),
+      path.join(os.homedir(), 'AppData', 'Local', 'OpenCode', 'opencode-cli.exe')
+    ].filter(Boolean);
+    const found = candidates.find((p) => fs.existsSync(p));
+    this.externalOpencode = !!found;
+    this.opencodePath = found || path.join(this.runtimeBin, 'opencode-cli.exe');
     this.ensure();
   }
 
@@ -61,11 +71,8 @@ class Store {
   }
 
   syncBundledRuntime() {
-    const candidates = [
-      path.join(bundledRuntimeRoot(), 'opencode.exe'),
-      path.join(bundledRuntimeRoot(), 'opencode.cmd'),
-      path.join(bundledRuntimeRoot(), 'opencode')
-    ];
+    if (this.externalOpencode) return; // 使用已安装的 CLI，无需复制
+    const candidates = OPENCODE_CLI_NAMES.map((name) => path.join(bundledRuntimeRoot(), name));
     const source = candidates.find((candidate) => fs.existsSync(candidate));
     if (!source) return;
     const destination = this.opencodePath;
@@ -201,10 +208,15 @@ class OpenCodeRuntime {
     try {
       const output = this.runSync(['models', 'opencode'], 20_000);
       const includeExperimental = settings.includeExperimentalModels === true;
-      let models = output
+      const ids = output
         .split(/\r?\n/)
         .map((line) => line.trim())
-        .filter((line) => line.startsWith('opencode/'))
+        .filter((line) => line.startsWith('opencode/'));
+      if (ids.length === 0) {
+        this.modelCache = { expiresAt: now + 60_000, models: [] };
+        return [];
+      }
+      let models = ids
         .map((id) => ({
           id,
           displayName: shortModelName(id),
@@ -248,7 +260,7 @@ class OpenCodeRuntime {
 
   startLogin() {
     if (!fs.existsSync(this.store.opencodePath)) {
-      throw new Error('Bundled OpenCode runtime is missing. Put opencode.exe into resources/runtime/bin before packaging.');
+      throw new Error('Bundled OpenCode CLI runtime is missing. Run npm run prepare:runtime before packaging.');
     }
     const command = `start "OCKey OpenCode Login" cmd /k ""${this.store.opencodePath}" auth login"`;
     spawn('cmd.exe', ['/d', '/s', '/c', command], {
@@ -314,7 +326,10 @@ class OCKeyServer {
   start() {
     if (this.server) return Promise.resolve();
     this.server = http.createServer((req, res) => {
-      this.route(req, res).catch((error) => this.jsonError(res, 500, 'internal_error', error.message));
+      this.route(req, res).catch((error) => {
+        const pathname = safe(() => new URL(req.url || '/', BASE_URL).pathname, '');
+        this.jsonError(res, 500, 'internal_error', error.message, pathname.startsWith('/v1/'));
+      });
     });
     return new Promise((resolve, reject) => {
       this.server.once('error', reject);
@@ -364,13 +379,41 @@ class OCKeyServer {
     };
   }
 
+  publicHealth() {
+    const state = this.state();
+    const channelHealth = { total: state.keys.length, ok: 0, warn: 0, bad: 0, unknown: 0 };
+    for (const key of state.keys) {
+      const level = state.keyHealth[key.id]?.level || 'unknown';
+      channelHealth[level] = (channelHealth[level] || 0) + 1;
+    }
+    return {
+      ok: state.ok,
+      service: state.service,
+      baseUrl: state.baseUrl,
+      openAIBaseUrl: state.openAIBaseUrl,
+      defaultModel: state.defaultModel,
+      models: state.models,
+      availableModels: state.availableModels,
+      opencodeStatus: state.opencodeStatus,
+      channelHealth,
+      settings: state.settings,
+      dataDir: state.dataDir,
+      runtimePath: state.runtimePath
+    };
+  }
+
   async route(req, res) {
     const url = new URL(req.url || '/', BASE_URL);
     const method = req.method || 'GET';
-    if (method === 'OPTIONS') { this.empty(res, 204); return; }
+    const allowApiCors = url.pathname.startsWith('/v1/');
+    if (method === 'OPTIONS') { this.empty(res, allowApiCors ? 204 : 403, allowApiCors); return; }
+    if (isAdminPath(url.pathname) && !isAllowedLocalAdminRequest(req)) {
+      this.jsonError(res, 403, 'forbidden', 'Cross-origin admin requests are not allowed');
+      return;
+    }
     if (method === 'GET' && url.pathname === '/') { this.redirect(res, '/admin/ui'); return; }
     if (method === 'GET' && url.pathname === '/admin/ui') { this.html(res, adminHtml()); return; }
-    if (method === 'GET' && url.pathname === '/health') { this.json(res, this.state()); return; }
+    if (method === 'GET' && url.pathname === '/health') { this.json(res, this.publicHealth()); return; }
     if (method === 'GET' && url.pathname === '/admin/state') { this.json(res, this.state()); return; }
     if (method === 'POST' && url.pathname === '/admin/keys') { this.createKey(res, await readJsonBody(req)); return; }
     if (method === 'POST' && url.pathname === '/admin/delete-key') { this.deleteKey(res, await readJsonBody(req)); return; }
@@ -384,7 +427,7 @@ class OCKeyServer {
     if (method === 'GET' && url.pathname === '/v1/models') { this.v1Models(req, res); return; }
     if (method === 'POST' && url.pathname === '/v1/chat/completions') { await this.chatCompletions(req, res); return; }
     if (method === 'POST' && url.pathname === '/v1/responses') { await this.responses(req, res); return; }
-    this.jsonError(res, 404, 'not_found', `No route for ${method} ${url.pathname}`);
+    this.jsonError(res, 404, 'not_found', `No route for ${method} ${url.pathname}`, allowApiCors);
   }
 
   createKey(res, body) {
@@ -460,19 +503,19 @@ class OCKeyServer {
   }
 
   v1Models(req, res) {
-    if (!this.store.authenticate(req.headers.authorization)) { this.jsonError(res, 401, 'unauthorized', 'Missing or invalid API key'); return; }
+    if (!this.store.authenticate(req.headers.authorization)) { this.jsonError(res, 401, 'unauthorized', 'Missing or invalid API key', true); return; }
     const models = this.runtime.listModels(false);
     this.json(res, {
       object: 'list',
       data: models.map((model) => ({ id: model.id, object: 'model', created: 0, owned_by: 'opencode' }))
-    });
+    }, true);
   }
 
   async chatCompletions(req, res) {
     const key = this.store.authenticate(req.headers.authorization);
-    if (!key) { this.jsonError(res, 401, 'unauthorized', 'Missing or invalid API key'); return; }
+    if (!key) { this.jsonError(res, 401, 'unauthorized', 'Missing or invalid API key', true); return; }
     const body = await readJsonBody(req);
-    if (body.stream === true) { this.jsonError(res, 400, 'stream_not_supported', 'stream=true is not supported in OCKey 1.0'); return; }
+    if (body.stream === true) { this.jsonError(res, 400, 'stream_not_supported', 'stream=true is not supported in OCKey 1.0', true); return; }
     const model = this.selectedModel(key, body.model);
     const messages = Array.isArray(body.messages) ? body.messages : [{ role: 'user', content: '' }];
     const started = Date.now();
@@ -486,12 +529,12 @@ class OCKeyServer {
       model,
       choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }],
       usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
-    });
+    }, true);
   }
 
   async responses(req, res) {
     const key = this.store.authenticate(req.headers.authorization);
-    if (!key) { this.jsonError(res, 401, 'unauthorized', 'Missing or invalid API key'); return; }
+    if (!key) { this.jsonError(res, 401, 'unauthorized', 'Missing or invalid API key', true); return; }
     const body = await readJsonBody(req);
     const model = this.selectedModel(key, body.model);
     const input = normalizeContent(body.input);
@@ -508,7 +551,7 @@ class OCKeyServer {
       output: [{ id: `msg-${crypto.randomUUID()}`, type: 'message', status: 'completed', role: 'assistant', content: [{ type: 'output_text', text: content }] }],
       output_text: content,
       usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 }
-    });
+    }, true);
   }
 
   selectedModel(key, requested) {
@@ -537,22 +580,25 @@ class OCKeyServer {
     }));
   }
 
-  writeHeaders(res, status, contentType = 'application/json; charset=utf-8') {
-    res.writeHead(status, {
+  writeHeaders(res, status, contentType = 'application/json; charset=utf-8', cors = false) {
+    const headers = {
       'content-type': contentType,
-      'access-control-allow-origin': '*',
-      'access-control-allow-headers': 'authorization,content-type',
-      'access-control-allow-methods': 'GET,POST,OPTIONS'
-    });
+    };
+    if (cors) {
+      headers['access-control-allow-origin'] = '*';
+      headers['access-control-allow-headers'] = 'authorization,content-type';
+      headers['access-control-allow-methods'] = 'GET,POST,OPTIONS';
+    }
+    res.writeHead(status, headers);
   }
 
-  json(res, value) {
-    this.writeHeaders(res, 200);
+  json(res, value, cors = false) {
+    this.writeHeaders(res, 200, 'application/json; charset=utf-8', cors);
     res.end(JSON.stringify(value, null, 2));
   }
 
-  jsonError(res, status, code, message) {
-    this.writeHeaders(res, status);
+  jsonError(res, status, code, message, cors = false) {
+    this.writeHeaders(res, status, 'application/json; charset=utf-8', cors);
     res.end(JSON.stringify({ error: { code, message } }, null, 2));
   }
 
@@ -566,8 +612,8 @@ class OCKeyServer {
     res.end();
   }
 
-  empty(res, status) {
-    this.writeHeaders(res, status);
+  empty(res, status, cors = false) {
+    this.writeHeaders(res, status, 'application/json; charset=utf-8', cors);
     res.end();
   }
 }
@@ -731,6 +777,27 @@ function adminHtml() {
   </script>
 </body>
 </html>`;
+}
+
+function isAdminPath(pathname) {
+  return pathname === '/admin/ui' || pathname.startsWith('/admin/');
+}
+
+function isAllowedLocalAdminRequest(req) {
+  const fetchSite = String(req.headers['sec-fetch-site'] || '').toLowerCase();
+  if (fetchSite && fetchSite !== 'same-origin' && fetchSite !== 'none') return false;
+
+  const origin = req.headers.origin;
+  if (!origin) return true;
+
+  const host = req.headers.host || `${HOST}:${PORT}`;
+  return new Set([
+    BASE_URL,
+    `http://${host}`,
+    `http://${HOST}:${PORT}`,
+    `http://127.0.0.1:${PORT}`,
+    `http://localhost:${PORT}`
+  ]).has(origin);
 }
 
 function readJsonBody(req) {
