@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without the v prefix"
+        required: true
+        default: "1.0.0"
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    name: Build macOS DMG
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install OpenCode CLI
+        run: npm install -g opencode-ai@1.15.13
+      - name: Build app
+        run: OPENCODE_SOURCE="$(command -v opencode)" npm run build-app
+      - name: Package DMG
+        run: npm run package-dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ockey-macos
+          path: ../OCKey-*.dmg
+          if-no-files-found: error
+
+  build-windows:
+    name: Build Windows EXE
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: windows/package-lock.json
+      - name: Install dependencies
+        working-directory: windows
+        run: npm ci
+      - name: Build installers
+        working-directory: windows
+        run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ockey-windows
+          path: |
+            windows/dist/OCKey-Setup-*-Windows.exe
+            windows/dist/OCKey-Portable-*-Windows.exe
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs:
+      - build-macos
+      - build-windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Resolve release version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "tag=v${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "name=OCKey ${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "name=OCKey ${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.name }}
+          files: release-assets/*
+          draft: false
+          prerelease: false
