@@ -25,19 +25,28 @@ Use that Base URL and key in other products, while OCKey handles OpenCode locall
 
 ## Runtime Rule
 
-The Windows package should include OpenCode at:
+OCKey packages only the standalone OpenCode CLI, not the OpenCode desktop app. The build script prepares it at:
 
 ```text
-resources/runtime/bin/opencode.exe
+resources/runtime/bin/opencode-cli.exe
 ```
 
 For packaged builds, Electron Builder copies it into the app resources. On first run OCKey copies it to:
 
 ```text
-%APPDATA%\OCKey\runtime\bin\opencode.exe
+%APPDATA%\OCKey\runtime\bin\opencode-cli.exe
 ```
 
 OCKey does not include or copy your OpenCode login token. Login is performed by the bundled OpenCode CLI through OpenCode's official authentication flow.
+
+Before packaging, prepare and verify the CLI runtime from the project root:
+
+```powershell
+npm run prepare:runtime
+resources\runtime\bin\opencode-cli.exe --version
+```
+
+The default source is the `opencode-windows-x64` npm package. To use a CLI you built from source, set `OCKEY_OPENCODE_RUNTIME_SOURCE` to that exe before running `npm run prepare:runtime`.
 
 ## Data
 
