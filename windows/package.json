@@ -3,18 +3,20 @@
   "version": "1.0.0",
   "private": true,
   "description": "Windows tray app that exposes bundled OpenCode free models through a local OpenAI-compatible API.",
+  "author": "OCKey",
   "main": "src/main.js",
   "scripts": {
-    "check": "node --check src/server.js && node --check src/main.js",
+    "check": "node --check src/server.js && node --check src/main.js && node --check scripts/smoke.js && node --check scripts/prepare-opencode-runtime.js",
+    "prestart": "npm run prepare:runtime",
     "start": "electron .",
+    "prestart:server": "npm run prepare:runtime",
     "start:server": "node src/server.js",
-    "build": "electron-builder --win nsis portable",
+    "prepare:runtime": "node scripts/prepare-opencode-runtime.js",
+    "build": "npm run prepare:runtime && electron-builder --win nsis portable",
     "smoke": "node scripts/smoke.js"
   },
-  "dependencies": {
-    "electron": "^33.4.11"
-  },
   "devDependencies": {
+    "electron": "^33.4.11",
     "electron-builder": "^25.1.8"
   },
   "build": {
@@ -25,13 +27,17 @@
     },
     "files": [
       "src/**/*",
-      "resources/**/*",
-      "package.json"
+      "package.json",
+      "!resources/**/*"
     ],
     "extraResources": [
       {
         "from": "resources/runtime/bin",
-        "to": "runtime/bin"
+        "to": "runtime/bin",
+        "filter": [
+          "opencode-cli.exe",
+          "README.md"
+        ]
       }
     ],
     "win": {
@@ -39,13 +45,20 @@
         "nsis",
         "portable"
       ],
-      "artifactName": "OCKey-1.0.0-Windows.${ext}"
+      "signAndEditExecutable": false
     },
     "nsis": {
+      "artifactName": "OCKey-Setup-1.0.0-Windows.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
+    },
+    "portable": {
+      "artifactName": "OCKey-Portable-1.0.0-Windows.${ext}"
     }
+  },
+  "optionalDependencies": {
+    "opencode-windows-x64": "^1.15.13"
   }
 }
