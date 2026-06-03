@@ -1,24 +1,30 @@
 # OCKey
 
-OCKey is a tiny macOS menu-bar app that exposes OpenCode models through a local OpenAI-compatible API.
+OCKey is a tiny local app that exposes OpenCode models through a local OpenAI-compatible API.
 
 It is designed to be installed as a standalone app. The app bundle includes an OpenCode CLI runtime, starts a local server at `127.0.0.1:8789`, generates local `ockey_...` API keys, and defaults to OpenCode models marked as free.
 
-## Windows
+The macOS menu-bar version lives in [`app/`](app/). The Windows tray version lives in [`windows/`](windows/).
 
-The Windows tray version lives in [`windows/`](windows/). It uses the same local API shape, port, and `ockey_...` key format, but is packaged with Electron for Windows.
+## Windows Build
 
-Before building the Windows package, put the Windows OpenCode runtime at:
+The Windows tray version uses the same local API shape, port, and `ockey_...` key format, but is packaged with Electron for Windows.
 
-```text
-windows/resources/runtime/bin/opencode.exe
+Before building the Windows package, run:
+
+```powershell
+cd windows
+npm install
+npm run build
 ```
+
+The Windows build copies only the standalone OpenCode CLI from the `opencode-windows-x64` npm package into `windows/resources/runtime/bin/opencode-cli.exe`. It does not bundle the OpenCode desktop app.
 
 ## Quick Start
 
-1. Install `OCKey.app`.
-2. Open OCKey from Applications.
-3. Open the menu-bar item and choose `Open Console`.
+1. Install `OCKey.app` on macOS, or run the Windows setup/portable executable.
+2. Open OCKey.
+3. Open the menu-bar/tray item and choose the console.
 4. If OpenCode is not logged in, click `Start Login`.
 5. Generate a channel and copy `Key + URL`.
 
