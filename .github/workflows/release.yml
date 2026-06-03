@@ -29,10 +29,14 @@ jobs:
         run: OPENCODE_SOURCE="$(command -v opencode)" npm run build-app
       - name: Package DMG
         run: npm run package-dmg
+      - name: Stage DMG artifact
+        run: |
+          mkdir -p release-assets
+          mv ../OCKey-*.dmg release-assets/
       - uses: actions/upload-artifact@v4
         with:
           name: ockey-macos
-          path: ../OCKey-*.dmg
+          path: release-assets/OCKey-*.dmg
           if-no-files-found: error
 
   build-windows:
